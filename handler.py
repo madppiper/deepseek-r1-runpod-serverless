@@ -4,12 +4,14 @@ import subprocess
 import signal
 import time
 import logging
-from sglang import RuntimeClient, gen
+import sglang as sgl
+from sglang.srt.client import RuntimeClient
 
-# Configuration des logs
+# Configuration des logs avec timestamp
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
 
@@ -21,50 +23,73 @@ def start_sglang_server():
     """Démarre le serveur SGLang"""
     global sglang_process, sglang_client
     try:
+        logger.info("=== DÉMARRAGE DU WORKER ===")
+        logger.info(f"Version de SGLang: {sgl.__version__}")
+        logger.info(f"Configuration GPU: {os.environ.get('NUM_GPUS', '2')} GPUs")
+        logger.info("Vérification de l'espace disque...")
+        
+        # Vérification de l'espace disque
+        df = subprocess.check_output(['df', '-h', '/']).decode()
+        logger.info(f"Espace disque disponible:\n{df}")
+        
         logger.info("Démarrage du serveur SGLang...")
-        logger.info(f"Nombre de GPUs configuré: {os.environ.get('NUM_GPUS', '2')}")
+        start_time = time.time()
         
         cmd = [
             "python3", "-m", "sglang.launch_server",
             "--model", "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
             "--trust-remote-code",
-            "--tp", str(os.environ.get("NUM_GPUS", "2"))
+            "--tp", str(os.environ.get("NUM_GPUS", "2")),
+            "--host", "0.0.0.0",
+            "--port", "30000"
         ]
         logger.info(f"Commande de lancement: {' '.join(cmd)}")
         
-        # Redirection des sorties pour capturer les logs
+        # Redirection des sorties pour capturer les logs en temps réel
         sglang_process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            universal_newlines=True,
+            bufsize=1
         )
         
-        logger.info("Attente du démarrage du serveur (30s)...")
-        time.sleep(30)
+        logger.info("Attente du démarrage du serveur et téléchargement du modèle...")
         
-        # Vérification des logs du processus
-        stdout, stderr = sglang_process.stdout, sglang_process.stderr
-        if stdout:
-            logger.info("Logs stdout du serveur:")
-            for line in stdout:
-                logger.info(f"SERVER OUT: {line.strip()}")
-        if stderr:
-            logger.warning("Logs stderr du serveur:")
-            for line in stderr:
-                logger.warning(f"SERVER ERR: {line.strip()}")
+        # Lecture des logs en temps réel
+        def log_output(pipe, prefix):
+            for line in pipe:
+                logger.info(f"{prefix}: {line.strip()}")
+                
+        from threading import Thread
+        Thread(target=log_output, args=(sglang_process.stdout, "SERVER")).start()
+        Thread(target=log_output, args=(sglang_process.stderr, "ERROR")).start()
         
-        # Vérification si le processus est toujours en vie
+        # Attente avec feedback
+        total_wait = 120  # augmenté à 120 secondes pour le téléchargement du modèle
+        for i in range(total_wait):
+            if i % 10 == 0:  # log toutes les 10 secondes
+                logger.info(f"Initialisation en cours... {i}/{total_wait}s")
+            time.sleep(1)
+            
+            # Vérification si le processus est toujours en vie
+            if sglang_process.poll() is not None:
+                raise Exception(f"Le serveur s'est arrêté prématurément avec le code: {sglang_process.returncode}")
+        
+        # Vérification finale
         if sglang_process.poll() is not None:
             logger.error(f"Le serveur s'est arrêté avec le code: {sglang_process.returncode}")
             raise Exception("Le serveur SGLang s'est arrêté de manière inattendue")
         
         logger.info("Initialisation du client SGLang...")
-        sglang_client = RuntimeClient("http://localhost:30000")
-        logger.info("Client SGLang initialisé avec succès")
+        sglang_client = RuntimeClient(server_addr="http://localhost:30000")
+        
+        end_time = time.time()
+        logger.info(f"Initialisation terminée en {end_time - start_time:.2f} secondes")
+        logger.info("=== WORKER PRÊT ===")
         
     except Exception as e:
-        logger.error(f"Erreur lors du démarrage du serveur: {str(e)}")
+        logger.error(f"Erreur critique lors du démarrage: {str(e)}")
         raise
 
 def stop_sglang_server():
@@ -98,10 +123,12 @@ def handler(event):
             return {"error": "Le serveur SGLang n'est plus en cours d'exécution"}
         
         logger.info("Génération du texte avec SGLang...")
-        program = gen(prompt, max_tokens=max_length, temperature=temperature)
+        start_time = time.time()
+        program = sgl.gen(prompt, max_tokens=max_length, temperature=temperature)
         result = sglang_client.run_single(program)
+        end_time = time.time()
         
-        logger.info("Génération terminée avec succès")
+        logger.info(f"Génération terminée en {end_time - start_time:.2f} secondes")
         return {"generated_text": result.output}
     
     except Exception as e:
