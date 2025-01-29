@@ -5,7 +5,7 @@ import signal
 import time
 import logging
 import sglang as sgl
-from sglang.srt.client import RuntimeClient
+from sglang.runtime.client import RuntimeClient
 
 # Configuration des logs avec timestamp
 logging.basicConfig(
