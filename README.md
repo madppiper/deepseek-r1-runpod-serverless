@@ -1,4 +1,4 @@
-# DeepSeek-R1 Serverless Deployment with SGLang
+# DeepSeek-R1 Serverless Deployment with SGLang x RunPOD
 
 🔒 **Own Your AI, Protect Your Data**
 
