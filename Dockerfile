@@ -6,11 +6,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Installation des dépendances Python
-RUN pip install --no-cache-dir \
-    transformers \
-    accelerate \
-    runpod \
-    sglang
+RUN pip install -r requirements.txt
 
 # Copie des fichiers du worker
 COPY handler.py .
